@@ -186,63 +186,242 @@ class PreNet(nn.Module):
         return x
 
 
-class Attention(nn.Module):
-    def __init__(self, attn_dims):
-        super().__init__()
-        self.W = nn.Linear(attn_dims, attn_dims, bias=False)
-        self.v = nn.Linear(attn_dims, 1, bias=False)
+# class Attention(nn.Module):
+#     def __init__(self, attn_dims):
+#         super().__init__()
+#         self.W = nn.Linear(attn_dims, attn_dims, bias=False)
+#         self.v = nn.Linear(attn_dims, 1, bias=False)
 
-    def forward(self, encoder_seq_proj, query, t):
+#     def forward(self, encoder_seq_proj, query, t):
 
-        # print(encoder_seq_proj.shape)
-        # Transform the query vector
-        query_proj = self.W(query).unsqueeze(1)
+#         # print(encoder_seq_proj.shape)
+#         # Transform the query vector
+#         query_proj = self.W(query).unsqueeze(1)
 
-        # Compute the scores
-        u = self.v(torch.tanh(encoder_seq_proj + query_proj))
-        scores = F.softmax(u, dim=1)
+#         # Compute the scores
+#         u = self.v(torch.tanh(encoder_seq_proj + query_proj))
+#         scores = F.softmax(u, dim=1)
 
-        return scores.transpose(1, 2)
+#         return scores.transpose(1, 2)
 
 
-class LSA(nn.Module):
-    def __init__(self, attn_dim, kernel_size=31, filters=32):
-        super().__init__()
-        self.conv = nn.Conv1d(1, filters, padding=(kernel_size - 1) // 2, kernel_size=kernel_size, bias=True)
-        self.L = nn.Linear(filters, attn_dim, bias=False)
-        self.W = nn.Linear(attn_dim, attn_dim, bias=True) # Include the attention bias in this term
+# class LSA(nn.Module):
+#     def __init__(self, attn_dim, kernel_size=31, filters=32):
+#         super().__init__()
+#         self.conv = nn.Conv1d(1, filters, padding=(kernel_size - 1) // 2, kernel_size=kernel_size, bias=True)
+#         self.L = nn.Linear(filters, attn_dim, bias=False)
+#         self.W = nn.Linear(attn_dim, attn_dim, bias=True) # Include the attention bias in this term
+#         self.v = nn.Linear(attn_dim, 1, bias=False)
+#         self.cumulative = None
+#         self.attention = None
+
+#     def init_attention(self, encoder_seq_proj):
+#         device = next(self.parameters()).device  # use same device as parameters
+#         b, t, c = encoder_seq_proj.size()
+#         self.cumulative = torch.zeros(b, t, device=device)
+#         self.attention = torch.zeros(b, t, device=device)
+
+#     def forward(self, encoder_seq_proj, query, t, chars):
+
+#         if t == 0: self.init_attention(encoder_seq_proj)
+
+#         processed_query = self.W(query).unsqueeze(1)
+
+#         location = self.cumulative.unsqueeze(1)
+#         processed_loc = self.L(self.conv(location).transpose(1, 2))
+
+#         u = self.v(torch.tanh(processed_query + encoder_seq_proj + processed_loc))
+#         u = u.squeeze(-1)
+
+#         # Mask zero padding chars
+#         u = u * (chars != 0).float()
+
+#         # Smooth Attention
+#         # scores = torch.sigmoid(u) / torch.sigmoid(u).sum(dim=1, keepdim=True)
+#         scores = F.softmax(u, dim=1)
+#         self.attention = scores
+#         self.cumulative = self.cumulative + self.attention
+
+#         return scores.unsqueeze(-1).transpose(1, 2)
+
+
+
+
+class BahdanauAttention(nn.Module):
+    """
+    BahdanauAttention
+    This attention is described in:
+        D. Bahdanau, K. Cho, and Y. Bengio, "Neural Machine Translation by Jointly Learning to Align and Translate,"
+        in International Conference on Learning Representation (ICLR), 2015.
+        https://arxiv.org/abs/1409.0473
+    """
+    def __init__(self, query_dim, attn_dim, score_mask_value=-float("inf")):
+        super(BahdanauAttention, self).__init__()
+
+        # Query layer to project query to hidden representation
+        # (query_dim -> attn_dim)
+        self.query_layer = nn.Linear(query_dim, attn_dim, bias=False)
+
+        # For computing alignment energies
+        self.tanh = nn.Tanh()
         self.v = nn.Linear(attn_dim, 1, bias=False)
-        self.cumulative = None
-        self.attention = None
 
-    def init_attention(self, encoder_seq_proj):
-        device = next(self.parameters()).device  # use same device as parameters
-        b, t, c = encoder_seq_proj.size()
-        self.cumulative = torch.zeros(b, t, device=device)
-        self.attention = torch.zeros(b, t, device=device)
+        # For computing weights
+        self.score_mask_value = score_mask_value
 
+    # def forward(self, query, processed_memory, mask=None):
     def forward(self, encoder_seq_proj, query, t, chars):
+        """
+        Get normalized attention weight
+        Args:
+            query: (batch, 1, dim) or (batch, dim)
+            processed_memory: (batch, max_time, dim)
+            mask: (batch, max_time)
+        Returns:
+            alignment: [batch, max_time]
+        """
 
         if t == 0: self.init_attention(encoder_seq_proj)
 
-        processed_query = self.W(query).unsqueeze(1)
+        # processed_query = self.W(query).unsqueeze(1)
 
-        location = self.cumulative.unsqueeze(1)
-        processed_loc = self.L(self.conv(location).transpose(1, 2))
+        # location = self.cumulative.unsqueeze(1)
+        # processed_loc = self.L(self.conv(location).transpose(1, 2))
 
-        u = self.v(torch.tanh(processed_query + encoder_seq_proj + processed_loc))
-        u = u.squeeze(-1)
+        # u = self.v(torch.tanh(processed_query + encoder_seq_proj + processed_loc))
+        # u = u.squeeze(-1)
+
+        u = self.get_energies(query, encoder_seq_proj)
 
         # Mask zero padding chars
         u = u * (chars != 0).float()
 
+        alignment = self.get_probabilities(u)
+
         # Smooth Attention
         # scores = torch.sigmoid(u) / torch.sigmoid(u).sum(dim=1, keepdim=True)
-        scores = F.softmax(u, dim=1)
-        self.attention = scores
-        self.cumulative = self.cumulative + self.attention
+        # scores = F.softmax(u, dim=1)
+        # self.attention = scores
+        # self.cumulative = self.cumulative + self.attention
 
-        return scores.unsqueeze(-1).transpose(1, 2)
+        # return scores.unsqueeze(-1).transpose(1, 2)
+        return alignment
+
+
+
+
+        # if query.dim() == 2:
+        #     # insert time-axis for broadcasting
+        #     query = query.unsqueeze(1)
+
+        # Alignment energies
+        # alignment = self.get_energies(query, encoder_seq_proj)
+
+        # if mask is not None:
+        #     mask = mask.view(query.size(0), -1)
+        #     alignment.data.masked_fill_(mask, self.score_mask_value)
+
+        # # Alignment probabilities (attention weights)
+        # alignment = self.get_probabilities(alignment)
+
+        # # (batch, max_time)
+        # return alignment
+
+
+
+
+    def init_attention(self, processed_memory):
+        # Nothing to do in the base module
+        return
+
+    def get_energies(self, query, processed_memory):
+        """
+        Compute the alignment energies
+        """
+        # Query (batch, 1, dim)
+        processed_query = self.query_layer(query)
+
+        # Alignment energies (batch, max_time, 1)
+        alignment = self.v(self.tanh(processed_query + processed_memory))
+
+        # (batch, max_time)
+        return alignment.squeeze(-1)
+
+    def get_probabilities(self, energies):
+        """
+        Compute the alignment probabilites (attention weights) from energies
+        """
+        return nn.Softmax(dim=1)(energies)
+
+
+
+
+class StepwiseMonotonicAttention(BahdanauAttention):
+    """
+    StepwiseMonotonicAttention (SMA)
+    This attention is described in:
+        M. He, Y. Deng, and L. He, "Robust Sequence-to-Sequence Acoustic Modeling with Stepwise Monotonic Attention for Neural TTS,"
+        in Annual Conference of the International Speech Communication Association (INTERSPEECH), 2019, pp. 1293-1297.
+        https://arxiv.org/abs/1906.00672
+    See:
+        https://gist.github.com/mutiann/38a7638f75c21479582d7391490df37c
+        https://github.com/keonlee9420/Stepwise_Monotonic_Multihead_Attention
+    """
+    def __init__(self, query_dim, attn_dim, sigmoid_noise=2.0, score_mask_value=-float("inf")):
+        """
+        Args:
+            sigmoid_noise: Standard deviation of pre-sigmoid noise.
+                           Setting this larger than 0 will encourage the model to produce
+                           large attention scores, effectively making the choosing probabilities
+                           discrete and the resulting attention distribution one-hot.
+        """
+        super(StepwiseMonotonicAttention, self).__init__(query_dim, attn_dim, score_mask_value)
+
+        self.alignment = None # alignment in previous query time step
+        self.sigmoid_noise = sigmoid_noise
+
+    def init_attention(self, processed_memory):
+        # Initial alignment with [1, 0, ..., 0]
+        b, t, c = processed_memory.size()
+        self.alignment = processed_memory.new_zeros(b, t)
+        self.alignment[:, 0:1] = 1
+
+    def stepwise_monotonic_attention(self, p_i, prev_alignment):
+        """
+        Compute stepwise monotonic attention
+            - p_i: probability to keep attended to the last attended entry
+            - Equation (8) in section 3 of the paper
+        """
+        pad = prev_alignment.new_zeros(prev_alignment.size(0), 1)
+        alignment = prev_alignment * p_i + torch.cat((pad, prev_alignment[:, :-1] * (1.0 - p_i[:, :-1])), dim=1)
+        return alignment
+
+    def get_selection_probability(self, e, std):
+        """
+        Compute selecton/sampling probability `p_i` from energies `e`
+            - Equation (4) and the tricks in section 2.2 of the paper
+        """
+        # Add Gaussian noise to encourage discreteness
+        if self.training:
+            noise = e.new_zeros(e.size()).normal_()
+            e = e + noise * std
+
+        # Compute selecton/sampling probability p_i
+        # (batch, max_time)
+        return torch.sigmoid(e)
+
+    def get_probabilities(self, energies):
+        # Selecton/sampling probability p_i
+        p_i = self.get_selection_probability(energies, self.sigmoid_noise)
+        
+        # Stepwise monotonic attention
+        alignment = self.stepwise_monotonic_attention(p_i, self.alignment)
+
+        # (batch, max_time)
+        self.alignment = alignment
+        return alignment
+
+
 
 
 class Decoder(nn.Module):
@@ -257,7 +436,8 @@ class Decoder(nn.Module):
         prenet_dims = (decoder_dims * 2, decoder_dims * 2)
         self.prenet = PreNet(n_mels, fc1_dims=prenet_dims[0], fc2_dims=prenet_dims[1],
                              dropout=dropout)
-        self.attn_net = LSA(decoder_dims)
+        # self.attn_net = LSA(decoder_dims)
+        self.attn_net = StepwiseMonotonicAttention(decoder_dims, decoder_dims) # 均是一个 dim
         self.attn_rnn = nn.GRUCell(encoder_dims + prenet_dims[1] + speaker_embedding_size, decoder_dims)
         self.rnn_input = nn.Linear(encoder_dims + decoder_dims + speaker_embedding_size, lstm_dims)
         self.res_rnn1 = nn.LSTMCell(lstm_dims, lstm_dims)
