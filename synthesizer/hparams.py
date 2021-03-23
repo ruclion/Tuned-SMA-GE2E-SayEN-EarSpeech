@@ -89,7 +89,7 @@ hparams = HParams(
         # utterance_min_duration = 1.6,               # Duration in seconds below which utterances are discarded
         
         # FaPig 简化代码:
-        metadata_fpath = '/ceph/home/hujk17/Tuned-GE2E-SayEN-EarSpeech/preprocess_dataset/train.txt',
+        metadata_fpath = '/ceph/home/hujk17/Tuned-SMA-GE2E-SayEN-EarSpeech/preprocess_dataset/train.txt',
         models_dir = 'synthesizer/saved_models/',
         save_every = 1000,
         # save_every = 10,

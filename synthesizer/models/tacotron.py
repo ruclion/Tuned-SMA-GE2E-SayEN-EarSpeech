@@ -283,6 +283,11 @@ class BahdanauAttention(nn.Module):
 
         if t == 0: self.init_attention(encoder_seq_proj)
 
+        if query.dim() == 2:
+            # insert time-axis for broadcasting
+            # print('here! I happened')
+            query = query.unsqueeze(1)
+
         # processed_query = self.W(query).unsqueeze(1)
 
         # location = self.cumulative.unsqueeze(1)
@@ -291,12 +296,17 @@ class BahdanauAttention(nn.Module):
         # u = self.v(torch.tanh(processed_query + encoder_seq_proj + processed_loc))
         # u = u.squeeze(-1)
 
+        # (batch, max_TXT_length)
         u = self.get_energies(query, encoder_seq_proj)
+        # print('u before:', u)
 
         # Mask zero padding chars
         u = u * (chars != 0).float()
 
+        # print('u after:', u)
+
         alignment = self.get_probabilities(u)
+        # print('alignment:', alignment.shape, alignment)
 
         # Smooth Attention
         # scores = torch.sigmoid(u) / torch.sigmoid(u).sum(dim=1, keepdim=True)
@@ -468,11 +478,16 @@ class Decoder(nn.Module):
         attn_hidden = self.attn_rnn(attn_rnn_in.squeeze(1), attn_hidden)
 
         # Compute the attention scores
-        print('111:', encoder_seq_proj.shape, encoder_seq_proj)
-        print('222:', attn_hidden.shape, attn_hidden)
-        print('333:', t.shape, t)
-        print('444:', chars.shape, chars)
+        # print('111:', encoder_seq_proj.shape, encoder_seq_proj)
+        # print('222:', attn_hidden.shape, attn_hidden)
+        # print('333:', t)
+        # print('444:', chars.shape, chars)
         scores = self.attn_net(encoder_seq_proj, attn_hidden, t, chars)
+
+        # print('final:', scores.shape, scores)
+        scores = scores.unsqueeze(-1).transpose(1, 2)
+        # print('final 222:', scores.shape, scores)
+        # print('final 333:', encoder_seq.shape, encoder_seq)
 
         # Dot product to create the context vector
         context_vec = scores @ encoder_seq
