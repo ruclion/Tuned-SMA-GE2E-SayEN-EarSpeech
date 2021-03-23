@@ -468,6 +468,10 @@ class Decoder(nn.Module):
         attn_hidden = self.attn_rnn(attn_rnn_in.squeeze(1), attn_hidden)
 
         # Compute the attention scores
+        print('111:', encoder_seq_proj.shape, encoder_seq_proj)
+        print('222:', attn_hidden.shape, attn_hidden)
+        print('333:', t.shape, t)
+        print('444:', chars.shape, chars)
         scores = self.attn_net(encoder_seq_proj, attn_hidden, t, chars)
 
         # Dot product to create the context vector
